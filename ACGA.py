@@ -40,6 +40,9 @@ def get_parser():
     parser.add_argument('--alpha', type=float, default=0.32)
     parser.add_argument('--beta', type=float, default=5.85)
     parser.add_argument('--gamma', type=float, default=1.9)
+    # 补充 subgraph_size 参数（关键修改）
+    parser.add_argument('--subgraph_size', type=int, default=64,  # 类型为整数，默认值64（可根据数据调整）
+                        help='Size of subgraph used in training (adjust based on your dataset)')
     return parser
 
 
@@ -205,7 +208,7 @@ def main(train_edge=None):
     data = data.to(device)
     print('Start training !!!')
     val_acc_list, test_acc_list = [], []
-    n_epochs = 3
+    n_epochs = 10000
     # 无论类别数是否为2，统一使用多分类损失（更通用，避免形状问题）
     nc_criterion = torch.nn.CrossEntropyLoss()
     num = 11

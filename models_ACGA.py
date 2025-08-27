@@ -217,15 +217,16 @@ class GCN_Net(torch.nn.Module):
         pos_mat = torch.rand(x.shape[0], x.shape[0]).cuda()
         neg_mat = torch.rand(x.shape[0], x.shape[0]).cuda()
 
+#对正样本邻接矩阵进行归一化
         deg = torch.sum(pos_mat, dim=1)
-        deg_inv_sqrt = deg.pow_(-0.5)
+        deg_inv_sqrt = deg.pow_(-0.5)#对称归一化
         deg_inv_sqrt.masked_fill_(deg_inv_sqrt == float('inf'), 0.)
         adj_t = torch.mul(pos_mat, deg_inv_sqrt.view(-1, 1))
         adj_pos = torch.mul(adj_t, deg_inv_sqrt.view(1, -1))
 
         deg = torch.sum(neg_mat, dim=1)
         deg_inv_sqrt = deg.pow_(-0.5)
-        deg_inv_sqrt.masked_fill_(deg_inv_sqrt == float('inf'), 0.)
+        deg_inv_sqrt.masked_fill_(deg_inv_sqrt == float('inf'), 0.)#处理度为0的节点
         adj_t = torch.mul(neg_mat, deg_inv_sqrt.view(-1, 1))
         adj_neg = torch.mul(adj_t, deg_inv_sqrt.view(1, -1))
 

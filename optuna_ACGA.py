@@ -157,12 +157,14 @@ def scipysp_to_pytorchsp(sp_mx):
 
 def main(trial=None, train_edge=None):
     parser = get_parser()
+
     try:
         args = parser.parse_args()
     except 'parser error':
         exit()
     print(args)
     setup_seed(1024)
+
     tvt_nids = pickle.load(open(f'./data_new/graphs/{args.dataset}_tvt_nids.pkl', 'rb'))
     adj_orig = pickle.load(open(f'./data_new/graphs/{args.dataset}_adj.pkl', 'rb'))
     features = pickle.load(open(f'./data_new/graphs/{args.dataset}_features.pkl', 'rb'))
@@ -191,7 +193,7 @@ def main(trial=None, train_edge=None):
     data = data.to(device)
     print('Start training !!!')
     val_acc_list, test_acc_list = [], []
-    n_epochs = 3
+    n_epochs = 10000
     # 无论类别数是否为2，统一使用多分类损失（更通用，避免形状问题）
     nc_criterion = torch.nn.CrossEntropyLoss()
     num = 11
@@ -227,6 +229,20 @@ def main(trial=None, train_edge=None):
                 cls_loss = train_cls(model, data, args, nc_criterion, optimizer_cls, epoch)
                 loss = rep_loss + cls_loss
                 loss.backward()
+                # --------------------------
+                # 新增：打印所有可训练参数的梯度统计
+                # --------------------------
+                print(f"\nEpoch {epoch:3d} | 各层梯度统计：")
+                for name, param in model.named_parameters():
+                    if param.grad is not None:  # 只打印有梯度的参数
+                        grad_mean = param.grad.mean().item()
+                        grad_max = param.grad.max().item()
+                        grad_min = param.grad.min().item()
+                        print(f"  {name:20s} | 均值：{grad_mean:.6f} | 最大值：{grad_max:.6f} | 最小值：{grad_min:.6f}")
+                    else:
+                        print(f"  {name:20s} | 梯度为 None（该层未参与计算）")
+
+
                 optimizer_cls.step()
                 optimizer_cls.zero_grad()
                 with torch.no_grad():
@@ -292,7 +308,7 @@ def main(trial=None, train_edge=None):
 
 if __name__ == '__main__':
     study = optuna.create_study(direction="maximize")
-    study.optimize(main, n_trials=1)
+    study.optimize(main, n_trials=500)
     print("Number of finished trials: ", len(study.trials))
     print("Best trial:")
     trial = study.best_trial

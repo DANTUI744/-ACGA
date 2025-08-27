@@ -50,3 +50,9 @@ python ACGA.py --dataset combined --hidden_size 32 --emb_size 16 --gae 0 --use_b
 ```
 
 #### 运行 yyz 数据集
+
+
+'''
+python optuna_ACGA.py --dataset cora --hidden_size 128 --emb_size 32 --gae 0 --use_bns True --task 0
+'''
+
