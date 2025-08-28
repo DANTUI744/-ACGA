@@ -228,7 +228,7 @@ def main(train_edge=None):
     for weight in range(1, num):
         if args.task == 0:
 
-            lr, weight_decay = 1e-2, 5e-4  # , 5e-4  # , 5e-4  # , 5e-4
+            lr, weight_decay = 5e-4, 5e-4  # , 5e-4  # , 5e-4  # , 5e-4
             best_val_acc, last_test_acc, early_stop, patience = 0, 0, 0, 200  #
             model.reset_parameters()
             optimizer_cls = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -237,6 +237,7 @@ def main(train_edge=None):
                 cls_loss = train_cls(model, data, args, nc_criterion, optimizer_cls, epoch)
                 loss = rep_loss + cls_loss
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围
                 optimizer_cls.step()
                 optimizer_cls.zero_grad()
                 with torch.no_grad():
@@ -260,6 +261,7 @@ def main(train_edge=None):
                 ep_loss = train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer_ep, args, weight)
                 loss = rep_loss + ep_loss
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围
                 optimizer_ep.step()
                 optimizer_ep.zero_grad()
                 with torch.no_grad():

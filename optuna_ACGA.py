@@ -217,7 +217,7 @@ def main(trial=None, train_edge=None):
         alpha, beta, gamma = 0.69, 8.85, 3.6
     for weight in range(1, num):
         if args.task == 0:
-            lr, weight_decay = 1e-2, 5e-4  # , 5e-4  # , 5e-4
+            lr, weight_decay = 5e-4, 5e-4  # , 5e-4  # , 5e-4
             best_val_acc, last_test_acc, early_stop, patience = 0, 0, 0, 200  # cora 100, cite-seer 250
             model.reset_parameters()
 
@@ -229,18 +229,7 @@ def main(trial=None, train_edge=None):
                 cls_loss = train_cls(model, data, args, nc_criterion, optimizer_cls, epoch)
                 loss = rep_loss + cls_loss
                 loss.backward()
-                # --------------------------
-                # 新增：打印所有可训练参数的梯度统计
-                # --------------------------
-                print(f"\nEpoch {epoch:3d} | 各层梯度统计：")
-                for name, param in model.named_parameters():
-                    if param.grad is not None:  # 只打印有梯度的参数
-                        grad_mean = param.grad.mean().item()
-                        grad_max = param.grad.max().item()
-                        grad_min = param.grad.min().item()
-                        print(f"  {name:20s} | 均值：{grad_mean:.6f} | 最大值：{grad_max:.6f} | 最小值：{grad_min:.6f}")
-                    else:
-                        print(f"  {name:20s} | 梯度为 None（该层未参与计算）")
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围
 
 
                 optimizer_cls.step()
@@ -269,6 +258,7 @@ def main(trial=None, train_edge=None):
                 ep_loss = train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer_ep, args, weight)
                 loss = rep_loss + ep_loss
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围
                 optimizer_ep.step()
                 optimizer_ep.zero_grad()
                 with torch.no_grad():
