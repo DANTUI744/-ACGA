@@ -125,22 +125,25 @@ class GCN_Net(torch.nn.Module):
         if edge is not None:
             input_x, edge_index = data.x, edge
         elif isinstance(data, Data):
-            input_x, edge_index, label = data.x, data.edge_index, data.y
-        elif isinstance(data, tuple):
-            input_x, edge_index = data
+            input_x, edge_index = data.x, data.edge_index  # 移除label，链接预测不需要标签
         else:
             raise TypeError('Unsupported data type!')
+
         if self.adj is None:
-            # self.adj = self.preprocess_graph(edge_index, input_x.size(0))
             self.adj = self.preprocess_graph_new(edge_index, input_x.size(0))
-        x_orig = input_x
-        x_orig = self.cons(x_orig, self.adj)
-        # x_orig = F.relu(F.dropout(x_orig, p=self.dropout, training=self.training))
-        if self.task == 0:
-            cls_x = self.cls(x_orig, self.adj)
+
+        # 图卷积特征提取
+        x_orig = self.cons(input_x, self.adj)
+        if self.use_bns:
+            x_orig = self.bns(x_orig)
+            x_orig = F.relu(F.dropout(x_orig, p=self.dropout, training=self.training))
+
+        # 链接预测：输出边的概率（通过点积计算边分数）
+        if self.task == 1:
+            z = self.ep(x_orig, self.adj)  # 得到节点嵌入
+            return torch.sigmoid(torch.matmul(z, z.t()))  # 点积+ sigmoid 得到边概率
         else:
-            cls_x = self.ep(x_orig, self.adj)
-        return cls_x
+            return self.cls(x_orig, self.adj)  # 节点分类保持不变
 
     def forward_emb(self, data, embedding):
         if isinstance(data, Data):
@@ -232,38 +235,44 @@ class GCN_Net(torch.nn.Module):
 
         return pos_mat, neg_mat, adj_pos.to(x.device), adj_neg.to(x.device)
 
-
     def generate_graph_smi_new(self, x, y):
+        # 原逻辑：全量计算欧氏距离，适合小规模数据
+        # 新逻辑：使用近似近邻搜索，减少计算量
         node_feature = x.cpu().detach().numpy()
-        simi_mat = cdist(node_feature, node_feature, 'euclidean')
-        np.fill_diagonal(simi_mat, np.max(simi_mat) + 1)
-        node_nns = np.argsort(simi_mat, axis=1)
-
-        number = 1
         num_nodes = node_feature.shape[0]
-        # 关键修改：使用self.device代替device
-        pos_graph = torch.eye(num_nodes, num_nodes).to(self.device)
+        pos_graph = torch.eye(num_nodes, num_nodes).to(self.device)  # 保留自环
         neg_graph = torch.eye(num_nodes, num_nodes).to(self.device)
 
-        for i in range(node_feature.shape[0]):
-            j = 0
-            flag = 0
-            while flag < number:
-                if y[node_nns[i][j]] == y[i]:
-                    pos_graph[i][node_nns[i][j]] = 1
-                    pos_graph[node_nns[i][j]][i] = 1
-                    flag += 1
-                j += 1
-            j = node_feature.shape[0] - 2
-            flag = 0
-            while flag < number:
-                if y[node_nns[i][j]] != y[i]:
-                    neg_graph[i][node_nns[i][j]] = 1
-                    neg_graph[node_nns[i][j]][i] = 1
-                    flag += 1
-                j -= 1
+        # 每个节点需要的正/负邻居数量（可根据数据集大小调整）
+        num_pos = 5  # 原逻辑中number=1，可适当增加
+        num_neg = 5
 
-        return pos_graph, neg_graph  # , pos_graph.to_sparse().indices(), neg_graph.to_sparse().indices()
+        # 对每个节点单独计算局部近邻，避免全量距离矩阵
+        for i in range(num_nodes):
+            # 计算当前节点与其他所有节点的距离（仅当前节点，而非全量）
+            distances = np.linalg.norm(node_feature[i] - node_feature, axis=1)
+            distances[i] = np.inf  # 排除自身
+
+            # 排序并筛选近邻（正样本：同标签，负样本：不同标签）
+            sorted_idx = np.argsort(distances)
+            pos_count = 0
+            neg_count = 0
+
+            for j in sorted_idx:
+                if pos_count < num_pos and y[j] == y[i]:
+                    # 正边：无向图，双向添加
+                    pos_graph[i, j] = 1.0
+                    pos_graph[j, i] = 1.0
+                    pos_count += 1
+                elif neg_count < num_neg and y[j] != y[i]:
+                    # 负边：无向图，双向添加
+                    neg_graph[i, j] = 1.0
+                    neg_graph[j, i] = 1.0
+                    neg_count += 1
+                if pos_count >= num_pos and neg_count >= num_neg:
+                    break  # 满足数量后提前退出，减少计算
+
+        return pos_graph, neg_graph
 
     def preprocess_graph(self, adj, num_nodes):
         adj_norm = torch.eye(num_nodes, num_nodes)
@@ -275,18 +284,18 @@ class GCN_Net(torch.nn.Module):
         adj_normalized = adj_norm.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt).tocoo()
         return self.scipysp_to_pytorchsp(adj_normalized).to(adj.device)
 
-    @staticmethod
-    def preprocess_graph_new(adj, num_nodes):
-        adj_norm = torch.eye(num_nodes, num_nodes)
-        for row, col in adj.transpose(0, 1):
-            adj_norm[row][col] = 1
-        deg = torch.sum(adj_norm, dim=1)
-        deg_inv_sqrt = deg.pow_(-0.5)
-        deg_inv_sqrt.masked_fill_(deg_inv_sqrt == float('inf'), 0.)
-        adj_t = torch.mul(adj_norm, deg_inv_sqrt.view(-1, 1))
-        adj_t = torch.mul(adj_t, deg_inv_sqrt.view(1, -1))
+    def preprocess_graph_new(self, edge_index, num_nodes):
+        # 从边索引构建邻接矩阵（稀疏表示）
+        adj = torch.zeros((num_nodes, num_nodes), device=self.device)
+        adj[edge_index[0], edge_index[1]] = 1.0
+        adj = adj + torch.eye(num_nodes, device=self.device)  # 保留自环
 
-        return adj_t.to(adj.device)
+        # 稀疏归一化（避免稠密矩阵运算）
+        deg = adj.sum(dim=1)
+        deg_inv_sqrt = deg.pow(-0.5)
+        deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0.0  # 处理孤立节点
+        adj_norm = deg_inv_sqrt.view(-1, 1) * adj * deg_inv_sqrt.view(1, -1)
+        return adj_norm
 
     @staticmethod
     def preprocess_graph(adj_norm, num_nodes):

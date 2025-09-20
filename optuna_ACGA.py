@@ -165,6 +165,7 @@ def main(trial=None, train_edge=None):
     print(args)
     setup_seed(1024)
 
+
     tvt_nids = pickle.load(open(f'./data_new/graphs/{args.dataset}_tvt_nids.pkl', 'rb'))
     adj_orig = pickle.load(open(f'./data_new/graphs/{args.dataset}_adj.pkl', 'rb'))
     features = pickle.load(open(f'./data_new/graphs/{args.dataset}_features.pkl', 'rb'))
@@ -188,6 +189,17 @@ def main(trial=None, train_edge=None):
                 test_mask=tvt_nids[2], num_classes=num_classes)
     # data = Planetoid(root='./dataset/' + args.dataset, name=args.dataset)
     data.train_mask, data.val_mask, data.test_mask = tvt_nids
+###以上是数据加载
+    if data.edge_index is None:
+        # 若 edge_index 为空，尝试从 adj_orig 重新构建
+        if isinstance(adj_orig, sp.coo_matrix):
+            # 从 scipy 稀疏矩阵构建 edge_index
+            row = torch.from_numpy(adj_orig.row).long()
+            col = torch.from_numpy(adj_orig.col).long()
+            data.edge_index = torch.stack([row, col], dim=0)
+        else:
+            raise ValueError("data.edge_index 为空，且无法从 adj_orig 重建")
+
     num_classes = data.num_classes
     feature_size = data.x.size(1)
     data = data.to(device)
@@ -197,14 +209,16 @@ def main(trial=None, train_edge=None):
     # 无论类别数是否为2，统一使用多分类损失（更通用，避免形状问题）
     nc_criterion = torch.nn.CrossEntropyLoss()
     num = 11
-    model = GCN_Net(feature_size,
-                    num_classes,
-                    hidden=args.hidden_size,
-                    emb_size=args.emb_size,
-                    dropout=0.5,
-                    gae=args.gae,
-                    use_bns=args.use_bns,
-                    task=args.task).to(device)
+    model = GCN_Net(
+        feature_size,
+        num_classes,
+        hidden=args.hidden_size,
+        emb_size=args.emb_size,
+        dropout=0.3,  # 降低dropout比例
+        gae=args.gae,
+        use_bns=args.use_bns,
+        task=args.task
+    ).to(device)
     new_label, adj_m, norm_w, pos_weight, train_edge = get_ep_data(data.cpu(), args)
     if args.task == 1:
         adj_m, pos_weight, train_edge = [x.to(device) for x in [adj_m, pos_weight, train_edge]]
@@ -216,35 +230,44 @@ def main(trial=None, train_edge=None):
     else:
         alpha, beta, gamma = 0.69, 8.85, 3.6
     for weight in range(1, num):
-        if args.task == 0:
-            lr, weight_decay = 5e-4, 5e-4  # , 5e-4  # , 5e-4
-            best_val_acc, last_test_acc, early_stop, patience = 0, 0, 0, 200  # cora 100, cite-seer 250
+        if args.task == 1:  # 链接预测任务
+            lr, weight_decay = 1e-3, 1e-4  # 调整学习率
+            best_val_auc, best_val_ap = 0, 0
+            last_test_auc, last_test_ap = 0, 0
+            early_stop, patience = 0, 300  # 延长早停耐心值
             model.reset_parameters()
+            optimizer_ep = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-            optimizer_cls = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-
-            for epoch in range(n_epochs):  # n_epochs,800
-                rep_loss = train_rep(model, data, 2, alpha=alpha, beta=beta, gamma=gamma, new_label=new_label)
-                # rep_loss = 0
-                cls_loss = train_cls(model, data, args, nc_criterion, optimizer_cls, epoch)
-                loss = rep_loss + cls_loss
+            for epoch in range(n_epochs):
+                # 训练链接预测
+                model.train()
+                # 1. 计算表示学习损失
+                rep_loss = train_rep(model, data, num_classes, alpha=alpha, beta=beta, gamma=gamma,
+                                     train_edge=train_edge, new_label=new_label)
+                # 2. 计算边预测损失
+                ep_loss = train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer_ep, args, weight)
+                # 总损失
+                loss = rep_loss + ep_loss
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                optimizer_ep.step()
+                optimizer_ep.zero_grad()
 
-
-                optimizer_cls.step()
-                optimizer_cls.zero_grad()
+                # 验证
                 with torch.no_grad():
-                    val_acc, test_acc = test_cls(model, data)
-                    # print(f"epoch {epoch} val acc = {val_acc}, test_acc = {test_acc}")
-                if val_acc > best_val_acc:
-                    best_val_acc, last_test_acc, early_stop = val_acc, test_acc, 0
+                    val_auc, val_ap, test_auc, test_ap = test_ep(model, data, train_edge)
+
+                # 早停逻辑
+                if val_auc > best_val_auc and val_ap > best_val_ap:
+                    best_val_auc, best_val_ap = val_auc, val_ap
+                    last_test_auc, last_test_ap = test_auc, test_ap
+                    early_stop = 0
                 else:
                     early_stop += 1
                 if early_stop >= patience:
                     break
-            print(f'num = {weight}, best_val_acc = {best_val_acc * 100:.1f}%, '
-                  f'last_test_acc = {last_test_acc * 100:.1f}%')
+            print(f'weight={weight}, best_val_auc={best_val_auc * 100:.1f}%, best_val_ap={best_val_ap * 100:.1f}% '
+                  f'test_auc={last_test_auc * 100:.1f}%, test_ap={last_test_ap * 100:.1f}%')
         else:
             lr, weight_decay = 1e-2, 5e-4  # 5e-4
             best_val_acc, best_val_ap, last_test_acc, last_test_ap, early_stop, patience = 0, 0, 0, 0, 0, 200

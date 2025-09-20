@@ -94,18 +94,16 @@ def train_cls(model, data, args, criterion, optimizer, epoch):
 
 
 def test_cls(model, data):
-    r"""Evaluates latent space quality via a logistic regression downstream task."""
     model.eval()
-    # criterion = F.CrossEntropyLoss()
     batch = data
     predict = model(batch)
-    # predict = model.test(batch)
     gcn_val_z = predict[batch.val_mask]
     gcn_test_z = predict[batch.test_mask]
     val_y = batch.y[batch.val_mask]
     test_y = batch.y[batch.test_mask]
-    gcn_val_acc = eval_node_cls(gcn_val_z, val_y)
-    gcn_test_acc = eval_node_cls(gcn_test_z, test_y)
+    # 新增：指定binary=True，启用二分类评估
+    gcn_val_acc = eval_node_cls(gcn_val_z, val_y, binary=True)
+    gcn_test_acc = eval_node_cls(gcn_test_z, test_y, binary=True)
     return gcn_val_acc, gcn_test_acc
 
 
@@ -184,10 +182,13 @@ def main(train_edge=None):
     adj_orig = pickle.load(open(f'./data_new/graphs/{args.dataset}_adj.pkl', 'rb'))
     features = pickle.load(open(f'./data_new/graphs/{args.dataset}_features.pkl', 'rb'))
     labels = pickle.load(open(f'./data_new/graphs/{args.dataset}_labels.pkl', 'rb'))
-    if not isinstance(features, torch.Tensor):
-        if isinstance(features, csr_matrix):
-            features = features.toarray()
-        features = torch.from_numpy(features).type(torch.float32)
+    # 新增：强制转换为numpy数组（确保格式统一）
+    if isinstance(features, csr_matrix):
+        features = features.toarray()
+    # 转换为torch张量并固定类型
+    features = torch.from_numpy(features).type(torch.float32)
+    # 新增：验证特征维度是否为273（combined数据集的特征维度）
+    assert features.shape[1] == 273, f"特征维度错误，应为273，实际为{features.shape[1]}"
 
     if not isinstance(labels, torch.Tensor):
         labels = torch.from_numpy(labels).type(torch.int64)
@@ -202,7 +203,11 @@ def main(train_edge=None):
     data = Data(x=features, edge_index=adj_orig, y=labels, train_mask=tvt_nids[0], val_mask=tvt_nids[1],
                 test_mask=tvt_nids[2], num_classes=num_classes)
 
-    data.train_mask, data.val_mask, data.test_mask = tvt_nids
+    data.train_mask = tvt_nids[0]
+    data.val_mask = tvt_nids[1]
+    data.test_mask = tvt_nids[2]
+    # 验证划分是否正确（combined的划分是1456,486,486）
+    print(f"训练集大小：{sum(data.train_mask)}，验证集：{sum(data.val_mask)}，测试集：{sum(data.test_mask)}")
     num_classes = data.num_classes
     feature_size = data.x.size(1)
     data = data.to(device)
@@ -212,14 +217,17 @@ def main(train_edge=None):
     # 无论类别数是否为2，统一使用多分类损失（更通用，避免形状问题）
     nc_criterion = torch.nn.CrossEntropyLoss()
     num = 11
-    model = GCN_Net(feature_size,
-                    num_classes,
-                    hidden=args.hidden_size,
-                    emb_size=args.emb_size,
-                    dropout=0.5,
-                    gae=args.gae,
-                    use_bns=args.use_bns,
-                    task=args.task).to(device)
+    # 针对combined数据集的参数调整
+    model = GCN_Net(
+        feature_size=273,  # 固定为combined的特征维度
+        num_classes=2,  # 二分类任务
+        hidden=128,  # 隐藏层维度（适合中等规模数据）
+        emb_size=32,  # 嵌入维度
+        dropout=0.6,  # 提高dropout防止过拟合
+        gae=args.gae,
+        use_bns=True,  # 启用批归一化
+        task=args.task
+    ).to(device)
     new_label, adj_m, norm_w, pos_weight, train_edge = get_ep_data(data.cpu(), args)
     if args.task == 1:
         adj_m, pos_weight, train_edge = [x.to(device) for x in [adj_m, pos_weight, train_edge]]
@@ -229,7 +237,7 @@ def main(train_edge=None):
         if args.task == 0:
 
             lr, weight_decay = 5e-4, 5e-4  # , 5e-4  # , 5e-4  # , 5e-4
-            best_val_acc, last_test_acc, early_stop, patience = 0, 0, 0, 200  #
+            best_val_acc, last_test_acc, early_stop, patience = 0, 0, 0, 300  #
             model.reset_parameters()
             optimizer_cls = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
             for epoch in range(n_epochs):  # n_epochs,800

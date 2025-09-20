@@ -8,6 +8,13 @@ from torch import nn
 from sklearn.metrics import roc_auc_score, average_precision_score
 from torch_geometric.nn import avg_pool_neighbor_x
 from torch_geometric.utils import degree, train_test_split_edges
+# ↓↓↓ 新增：导入 PyG 相关类（解决 NameError）↓↓↓
+from torch_geometric.data import Data  # 导入 Data 类
+from torch_geometric.utils import degree, train_test_split_edges  # 确保已有这行（之前可能漏了）
+# ↑↑↑ 新增导入 ↑↑↑
+# lib.py 顶部导入（已有则跳过）
+import numpy as np
+from torch_geometric.utils import remove_self_loops, to_undirected
 
 
 def setup_seed(seed):
@@ -26,9 +33,14 @@ def eval_edge_pred(adj_pred, val_edges, edge_labels):
     return roc_auc, ap_score
 
 
-def eval_node_cls(nc_logits, labels):
+def eval_node_cls(nc_logits, labels, binary=False):  # 新增binary参数
     """ evaluate node classification results """
-    if len(labels.size()) == 2:
+    if binary:  # 二分类逻辑（combined数据集用）
+        # 对输出用sigmoid激活，大于0.5视为正例
+        preds = torch.sigmoid(nc_logits[:, 1]) > 0.5  # 取第二类作为正例
+        correct = torch.sum(preds == labels)
+        f_measure = correct.item() / len(labels)  # 计算准确率
+    elif len(labels.size()) == 2:  # 原多标签逻辑（保留）
         preds = torch.round(torch.sigmoid(nc_logits))
         tp = len(torch.nonzero(preds * labels))
         tn = len(torch.nonzero((1 - preds) * (1 - labels)))
@@ -41,7 +53,7 @@ def eval_node_cls(nc_logits, labels):
             rec = tp / (tp + fn)
         if pre + rec > 0:
             f_measure = (2 * pre * rec) / (pre + rec)
-    else:
+    else:  # 原多分类逻辑（保留）
         preds = torch.argmax(nc_logits, dim=1)
         correct = torch.sum(preds == labels)
         f_measure = correct.item() / len(labels)
@@ -263,41 +275,98 @@ def compute_loss_para(adj):
     weight_tensor[weight_mask] = pos_weight
     return weight_tensor, norm
 
+###新加
+# ↓↓↓ 手动负边采样辅助函数（必须放在get_ep_data之前）↓↓↓
+def _generate_negative_edges(pos_edges, num_nodes, num_neg_needed):
+    pos_edge_set = set()
+    for u, v in pos_edges.T.numpy():
+        pos_edge_set.add(tuple(sorted((u, v))))
+    neg_edges = []
+    while len(neg_edges) < num_neg_needed:
+        u = np.random.randint(0, num_nodes)
+        v = np.random.randint(0, num_nodes)
+        if u == v:
+            continue
+        neg_edge = tuple(sorted((u, v)))
+        if neg_edge not in pos_edge_set:
+            neg_edges.append([u, v])
+    return torch.tensor(neg_edges, dtype=torch.long).T
 
+####大改
 # 在 lib.py 中修改 get_ep_data 函数
 def get_ep_data(data, args):
-    # 初始化默认返回值
     new_label = None
     adj_m = None
     norm_w = None
     pos_weight = None
     train_edge = None
 
-    if args.task == 1:  # 链接预测任务（task=1）
-        train_rate = 0.85
-        val_ratio = (1 - train_rate) / 3
-        test_ratio = (1 - train_rate) / 3 * 2
-        train_edge = train_test_split_edges(copy.copy(data), val_ratio, test_ratio)
+    if args.task == 1:  # 链接预测任务
+        # 关键修复：检查 edge_index 是否存在
+        if data.edge_index is None:
+            raise ValueError("data.edge_index 为 None，无法生成邻接矩阵")
 
-        # 关键修改：低版本PyTorch兼容的稀疏转稠密方法
-        num_nodes = data.x.size(0)  # 获取节点数量
-        edge_index = data.edge_index  # 边索引，形状为[2, num_edges]
-        num_edges = edge_index.size(1)
+        # 生成训练/验证/测试集边（确保返回值正确）
+        train_edge = train_test_split_edges(data, val_ratio=0.05, test_ratio=0.1)
 
-        # 构造稀疏COO张量（值全为1），再转为稠密矩阵
-        adj = torch.sparse_coo_tensor(
-            edge_index,  # 边索引
-            torch.ones(num_edges, device=edge_index.device),  # 边的权重（这里为1）
-            size=(num_nodes, num_nodes)  # 邻接矩阵形状
-        ).to_dense()  # 转为稠密矩阵
+        # 提取训练集正边（用于生成负边）
+        train_pos_edges = train_edge.train_pos_edge_index
+        if train_pos_edges is None:
+            raise ValueError("train_test_split_edges 未生成 train_pos_edge_index")
 
-        # 计算pos_weight和norm_w（保持原逻辑）
-        adj_m = adj.view(-1)
-        pos_weight = (adj.shape[0] ** 2 - adj.sum()) / adj.sum()
-        norm_w = adj.shape[0] ** 2 / (2 * (adj.shape[0] ** 2 - adj.sum()))
-    else:  # 节点分类任务（task=0）
-        pass  # 保持默认值
+        # 生成负边（若不存在）
+        if train_edge.train_neg_edge_index is None:
+            num_train_pos = train_pos_edges.size(1)
+            train_edge.train_neg_edge_index = generate_neg_edges(train_pos_edges, data.num_nodes, num_train_pos)
+        if train_edge.val_neg_edge_index is None:
+            num_val_pos = train_edge.val_pos_edge_index.size(1)
+            train_edge.val_neg_edge_index = generate_neg_edges(train_pos_edges, data.num_nodes, num_val_pos)
+        if train_edge.test_neg_edge_index is None:
+            num_test_pos = train_edge.test_pos_edge_index.size(1)
+            train_edge.test_neg_edge_index = generate_neg_edges(train_pos_edges, data.num_nodes, num_test_pos)
+
+        # 构建邻接矩阵（修复 edge_index 可能为 None 的问题）
+        adj_m = torch.sparse_coo_tensor(
+            data.edge_index,  # 确保此处 edge_index 不为空
+            torch.ones(data.edge_index.size(1)),  # 错误发生位置，添加前置检查
+            (data.num_nodes, data.num_nodes)
+        ).to_dense()
+
+        # 计算正负样本权重
+        pos_weight = (adj_m.numel() - adj_m.sum()) / adj_m.sum()
+        norm_w = adj_m.numel() / (2 * (adj_m.numel() - adj_m.sum()))
 
     return new_label, adj_m, norm_w, pos_weight, train_edge
 
+# 新增：负边生成函数（确保负边不与正边重复）
+def generate_neg_edges(pos_edges, num_nodes, num_neg):
+    # 新增：参数校验
+    if pos_edges is None:
+        raise ValueError("pos_edges不能为None，请检查train_pos_edge_index是否存在")
+    if not isinstance(pos_edges, torch.Tensor):
+        raise TypeError(f"pos_edges必须是torch.Tensor，实际为{type(pos_edges)}")
+    if pos_edges.dim() != 2 or pos_edges.size(0) != 2:
+        raise ValueError(f"pos_edges形状应为[2, 边数]，实际为{pos_edges.shape}")
 
+    # 正边转为集合便于快速查询（去重+无向化）
+    pos_set = set()
+    for i in range(pos_edges.size(1)):
+        u, v = pos_edges[0, i].item(), pos_edges[1, i].item()
+        if u > v:
+            u, v = v, u  # 确保u <= v，统一无向边存储格式
+        pos_set.add((u, v))
+
+    neg_edges = []
+    while len(neg_edges) < num_neg:
+        # 随机生成节点对（排除自环）
+        u = random.randint(0, num_nodes - 1)
+        v = random.randint(0, num_nodes - 1)
+        if u == v:
+            continue
+        if u > v:
+            u, v = v, u
+        if (u, v) not in pos_set:
+            neg_edges.append((u, v))
+            pos_set.add((u, v))  # 避免重复负边
+
+    return torch.tensor(neg_edges).t().long()  # 转为[2, num_neg]的形状
