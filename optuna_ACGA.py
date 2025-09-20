@@ -189,16 +189,7 @@ def main(trial=None, train_edge=None):
                 test_mask=tvt_nids[2], num_classes=num_classes)
     # data = Planetoid(root='./dataset/' + args.dataset, name=args.dataset)
     data.train_mask, data.val_mask, data.test_mask = tvt_nids
-###以上是数据加载
-    if data.edge_index is None:
-        # 若 edge_index 为空，尝试从 adj_orig 重新构建
-        if isinstance(adj_orig, sp.coo_matrix):
-            # 从 scipy 稀疏矩阵构建 edge_index
-            row = torch.from_numpy(adj_orig.row).long()
-            col = torch.from_numpy(adj_orig.col).long()
-            data.edge_index = torch.stack([row, col], dim=0)
-        else:
-            raise ValueError("data.edge_index 为空，且无法从 adj_orig 重建")
+
 
     num_classes = data.num_classes
     feature_size = data.x.size(1)
