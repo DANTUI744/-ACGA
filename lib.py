@@ -16,40 +16,6 @@ from torch_geometric.utils import degree, train_test_split_edges  # 确保已有
 import numpy as np
 from torch_geometric.utils import remove_self_loops, to_undirected
 
-# 在 lib.py 中添加负边生成函数（放在文件顶部导入后）
-
-def _generate_negative_edges(pos_edges, num_nodes, num_neg):
-    """
-    生成无自环、不与正边重叠的负边（仅修改此函数，不改动其他函数结构）
-    """
-    # 1. 移除正边中的自环，避免干扰负边判断
-    pos_edges = remove_self_loops(pos_edges)[0]
-    # 2. 将正边转为无序对集合（u < v 统一格式，方便查重）
-    pos_set = set()
-    for u, v in pos_edges.t().tolist():
-        if u < v:
-            pos_set.add((u, v))
-        else:
-            pos_set.add((v, u))
-
-    # 3. 生成负边（确保不重复、无自环）
-    neg_edges = []
-    while len(neg_edges) < num_neg:
-        # 随机生成两个不同节点
-        u = np.random.randint(0, num_nodes)
-        v = np.random.randint(0, num_nodes)
-        if u == v:  # 排除自环
-            continue
-        # 统一为 u < v 的格式
-        if u > v:
-            u, v = v, u
-        # 确保不是正边且未被选过
-        if (u, v) not in pos_set:
-            neg_edges.append((u, v))
-            pos_set.add((u, v))  # 避免负边内部重复
-
-    # 转换为 PyTorch 张量并返回（保持与原代码兼容的形状 [2, num_neg]）
-    return torch.tensor(neg_edges, dtype=torch.long).t().contiguous()
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -67,14 +33,9 @@ def eval_edge_pred(adj_pred, val_edges, edge_labels):
     return roc_auc, ap_score
 
 
-def eval_node_cls(nc_logits, labels, binary=False):  # 新增binary参数
+def eval_node_cls(nc_logits, labels):
     """ evaluate node classification results """
-    if binary:  # 二分类逻辑（combined数据集用）
-        # 对输出用sigmoid激活，大于0.5视为正例
-        preds = torch.sigmoid(nc_logits[:, 1]) > 0.5  # 取第二类作为正例
-        correct = torch.sum(preds == labels)
-        f_measure = correct.item() / len(labels)  # 计算准确率
-    elif len(labels.size()) == 2:  # 原多标签逻辑（保留）
+    if len(labels.size()) == 2:
         preds = torch.round(torch.sigmoid(nc_logits))
         tp = len(torch.nonzero(preds * labels))
         tn = len(torch.nonzero((1 - preds) * (1 - labels)))
@@ -87,7 +48,7 @@ def eval_node_cls(nc_logits, labels, binary=False):  # 新增binary参数
             rec = tp / (tp + fn)
         if pre + rec > 0:
             f_measure = (2 * pre * rec) / (pre + rec)
-    else:  # 原多分类逻辑（保留）
+    else:
         preds = torch.argmax(nc_logits, dim=1)
         correct = torch.sum(preds == labels)
         f_measure = correct.item() / len(labels)
@@ -326,7 +287,6 @@ def _generate_negative_edges(pos_edges, num_nodes, num_neg_needed):
             neg_edges.append([u, v])
     return torch.tensor(neg_edges, dtype=torch.long).T
 
-
 ####大改
 # 在 lib.py 中修改 get_ep_data 函数
 def get_ep_data(data, args):
@@ -401,13 +361,6 @@ def get_ep_data(data, args):
             if val_neg is not None:
                 print(f"  - 验证集：正边{val_pos.size(1)}条 → 负边{val_neg.size(1)}条")
         # ↑↑↑ 负边补充逻辑结束 ↑↑↑
-        train_pos = train_edge.train_pos_edge_index.t()  # 形状 [num_pos, 2]
-        train_neg = train_edge.train_neg_edge_index.t()  # 形状 [num_neg, 2]
-        train_edges = torch.cat([train_pos, train_neg], dim=0)  # 所有边
-        train_labels = torch.cat([
-            torch.ones(train_pos.size(0)),  # 正边标签
-            torch.zeros(train_neg.size(0))  # 负边标签
-        ]).to(train_edges.device)
 
         # 构造adj矩阵（用保存的原始edge_index）
         print("\n[构造adj矩阵] 使用原始edge_index，避免None错误...")
@@ -428,3 +381,6 @@ def get_ep_data(data, args):
         pass
 
     return new_label, adj_m, norm_w, pos_weight, train_edge
+
+
+

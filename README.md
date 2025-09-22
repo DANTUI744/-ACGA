@@ -32,7 +32,7 @@ python optuna_ACGA.py --dataset combined --hidden_size 128 --emb_size 32 --gae 0
 #### Run parameter search link prediction：
 
 ```
-python optuna_ACGA.py --dataset combined --hidden_size 32 --emb_size 16 --gae 0 --use_bns True --task 1
+python optuna_ACGA.py --dataset cora --hidden_size 32 --emb_size 16 --gae 0 --use_bns True --task 1
 ```
 
 
