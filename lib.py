@@ -16,6 +16,40 @@ from torch_geometric.utils import degree, train_test_split_edges  # 确保已有
 import numpy as np
 from torch_geometric.utils import remove_self_loops, to_undirected
 
+# 在 lib.py 中添加负边生成函数（放在文件顶部导入后）
+
+def _generate_negative_edges(pos_edges, num_nodes, num_neg):
+    """
+    生成无自环、不与正边重叠的负边（仅修改此函数，不改动其他函数结构）
+    """
+    # 1. 移除正边中的自环，避免干扰负边判断
+    pos_edges = remove_self_loops(pos_edges)[0]
+    # 2. 将正边转为无序对集合（u < v 统一格式，方便查重）
+    pos_set = set()
+    for u, v in pos_edges.t().tolist():
+        if u < v:
+            pos_set.add((u, v))
+        else:
+            pos_set.add((v, u))
+
+    # 3. 生成负边（确保不重复、无自环）
+    neg_edges = []
+    while len(neg_edges) < num_neg:
+        # 随机生成两个不同节点
+        u = np.random.randint(0, num_nodes)
+        v = np.random.randint(0, num_nodes)
+        if u == v:  # 排除自环
+            continue
+        # 统一为 u < v 的格式
+        if u > v:
+            u, v = v, u
+        # 确保不是正边且未被选过
+        if (u, v) not in pos_set:
+            neg_edges.append((u, v))
+            pos_set.add((u, v))  # 避免负边内部重复
+
+    # 转换为 PyTorch 张量并返回（保持与原代码兼容的形状 [2, num_neg]）
+    return torch.tensor(neg_edges, dtype=torch.long).t().contiguous()
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -367,6 +401,13 @@ def get_ep_data(data, args):
             if val_neg is not None:
                 print(f"  - 验证集：正边{val_pos.size(1)}条 → 负边{val_neg.size(1)}条")
         # ↑↑↑ 负边补充逻辑结束 ↑↑↑
+        train_pos = train_edge.train_pos_edge_index.t()  # 形状 [num_pos, 2]
+        train_neg = train_edge.train_neg_edge_index.t()  # 形状 [num_neg, 2]
+        train_edges = torch.cat([train_pos, train_neg], dim=0)  # 所有边
+        train_labels = torch.cat([
+            torch.ones(train_pos.size(0)),  # 正边标签
+            torch.zeros(train_neg.size(0))  # 负边标签
+        ]).to(train_edges.device)
 
         # 构造adj矩阵（用保存的原始edge_index）
         print("\n[构造adj矩阵] 使用原始edge_index，避免None错误...")

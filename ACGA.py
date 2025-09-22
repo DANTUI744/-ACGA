@@ -107,20 +107,26 @@ def test_cls(model, data):
     return gcn_val_acc, gcn_test_acc
 
 
-def train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer, args, wight):
+def train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer, args, wight, train_edges_labels):
     model.train()
-    kl_divergence = 0
+    train_edges, train_labels = train_edges_labels  # 解包正负边和标签
     batch = data.to(device)
-    adj = train_edge.train_pos_edge_index
-    adj_logit = model(batch, edge=adj)
-    loss_nc = norm_w * F.binary_cross_entropy_with_logits(adj_logit.view(-1), adj_m.view(-1), pos_weight=pos_weight)
-    # if not args.gae:
-    #     mu = model.ep.mean
-    #     logit = model.ep.logstd
-    #     kl_divergence = 0.5 * (1 + 2 * logit - mu ** 2 - torch.exp(2 * logit)).sum(1).mean()
-    loss_nc = loss_nc - kl_divergence
-    # loss_nc.backward()
-    # optimizer.step()
+
+    # 获取模型预测的所有边的概率
+    adj_logit = model(batch)  # 形状 [N, N]，节点对的概率矩阵
+
+    # 从概率矩阵中提取训练边（正负边）的预测值
+    # train_edges 形状 [num_total, 2]，每行是 (u, v)
+    u = train_edges[:, 0]
+    v = train_edges[:, 1]
+    pred_logits = adj_logit[u, v]  # 提取所有训练边的预测值
+
+    # 计算包含负边的损失（正边标签1，负边标签0）
+    loss_nc = F.binary_cross_entropy_with_logits(
+        pred_logits,
+        train_labels,
+        pos_weight=pos_weight  # 平衡正负样本比例
+    )
 
     return loss_nc
 
@@ -228,7 +234,8 @@ def main(train_edge=None):
         use_bns=True,  # 启用批归一化
         task=args.task
     ).to(device)
-    new_label, adj_m, norm_w, pos_weight, train_edge = get_ep_data(data.cpu(), args)
+    new_label, adj_m, norm_w, pos_weight, train_edge, train_edges_labels = get_ep_data(data.cpu(), args)
+
     if args.task == 1:
         adj_m, pos_weight, train_edge = [x.to(device) for x in [adj_m, pos_weight, train_edge]]
         val_ap_list, test_ap_list = [], []
@@ -266,7 +273,12 @@ def main(train_edge=None):
             for epoch in range(n_epochs):
                 rep_loss = train_rep(model, data, num_classes, alpha=alpha, beta=beta, gamma=gamma,
                                      train_edge=train_edge, new_label=new_label)
-                ep_loss = train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer_ep, args, weight)
+                # 训练时传入正负边数据
+                ep_loss = train_ep(
+                    model, data, train_edge, adj_m, norm_w, pos_weight,
+                    optimizer_ep, args, weight,
+                    train_edges_labels=train_edges_labels  # 新增参数
+                )
                 loss = rep_loss + ep_loss
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围

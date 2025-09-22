@@ -210,7 +210,8 @@ def main(trial=None, train_edge=None):
         use_bns=args.use_bns,
         task=args.task
     ).to(device)
-    new_label, adj_m, norm_w, pos_weight, train_edge = get_ep_data(data.cpu(), args)
+    new_label, adj_m, norm_w, pos_weight, train_edge, train_edges_labels = get_ep_data(data.cpu(), args)
+
     if args.task == 1:
         adj_m, pos_weight, train_edge = [x.to(device) for x in [adj_m, pos_weight, train_edge]]
         val_ap_list, test_ap_list = [], []
@@ -269,7 +270,12 @@ def main(trial=None, train_edge=None):
             for epoch in range(n_epochs):
                 rep_loss = train_rep(model, data, num_classes, alpha=alpha, beta=beta, gamma=gamma,
                                      train_edge=train_edge, new_label=new_label)
-                ep_loss = train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer_ep, args, weight)
+                # 训练时传入正负边数据
+                ep_loss = train_ep(
+                    model, data, train_edge, adj_m, norm_w, pos_weight,
+                    optimizer_ep, args, weight,
+                    train_edges_labels=train_edges_labels  # 新增参数
+                )
                 loss = rep_loss + ep_loss
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围
