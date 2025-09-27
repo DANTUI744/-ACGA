@@ -132,9 +132,14 @@ def test_ep(model, data, train_edge):
     adj = train_edge.train_pos_edge_index
     adj_logit = model(data, adj)
 
+    # 新增：打印预测值的标准差（衡量波动程度）
+    print(f"模型预测值标准差：{adj_logit.std().item():.4f}")  # 标准差应>0
+
     val_edges = torch.cat((train_edge.val_pos_edge_index, train_edge.val_neg_edge_index), axis=1).cpu().numpy()
     val_edge_labels = np.concatenate(
         [np.ones(train_edge.val_pos_edge_index.size(1)), np.zeros(train_edge.val_neg_edge_index.size(1))])
+
+
 
     test_edges = torch.cat((train_edge.test_pos_edge_index, train_edge.test_neg_edge_index), axis=1).cpu().numpy()
     test_edge_labels = np.concatenate(
@@ -255,6 +260,7 @@ def main(train_edge=None):
             best_val_acc, best_val_ap, last_test_acc, last_test_ap, early_stop, patience = 0, 0, 0, 0, 0, 200
             model.reset_parameters()
             optimizer_ep = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+
             for epoch in range(n_epochs):
                 rep_loss = train_rep(model, data, num_classes, alpha=alpha, beta=beta, gamma=gamma,
                                      train_edge=train_edge, new_label=new_label)
@@ -264,6 +270,11 @@ def main(train_edge=None):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围
                 optimizer_ep.step()
                 optimizer_ep.zero_grad()
+
+                # 新增：每10个epoch打印一次损失（方便观察）
+                if epoch % 2 == 0:
+                    print(f"Epoch {epoch}, 边预测训练损失：{ep_loss.item():.4f}")
+
                 with torch.no_grad():
                     val_acc, val_ap, test_acc, test_ap = test_ep(model, data, train_edge)
                 if val_acc > best_val_acc:

@@ -206,12 +206,13 @@ def main(trial=None, train_edge=None):
                     use_bns=args.use_bns,
                     task=args.task).to(device)
     new_label, adj_m, norm_w, pos_weight, train_edge = get_ep_data(data.cpu(), args)
-    if args.task == 1:
+
+    if args.task == 1:  # 边预测的数据准备
         adj_m, pos_weight, train_edge = [x.to(device) for x in [adj_m, pos_weight, train_edge]]
         val_ap_list, test_ap_list = [], []
     if trial is not None:
         alpha = trial.suggest_discrete_uniform('alpha', 0, 1, 0.01)
-        beta = trial.suggest_discrete_uniform('beta', 0, 10, 0.05)
+        beta = trial.suggest_discrete_uniform('beta', 0, 3, 0.05)
         gamma = trial.suggest_discrete_uniform('gama', 0, 5, 0.05)
     else:
         alpha, beta, gamma = 0.69, 8.85, 3.6
@@ -246,7 +247,7 @@ def main(trial=None, train_edge=None):
             print(f'num = {weight}, best_val_acc = {best_val_acc * 100:.1f}%, '
                   f'last_test_acc = {last_test_acc * 100:.1f}%')
         else:
-            lr, weight_decay = 1e-2, 5e-4  # 5e-4
+            lr, weight_decay = 1e-4, 5e-4  # 5e-4   修改了学习率，下降10
             best_val_acc, best_val_ap, last_test_acc, last_test_ap, early_stop, patience = 0, 0, 0, 0, 0, 200
             # setup_seed(1024)
             model.reset_parameters()
@@ -257,9 +258,19 @@ def main(trial=None, train_edge=None):
                                      train_edge=train_edge, new_label=new_label)
                 ep_loss = train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer_ep, args, weight)
                 loss = rep_loss + ep_loss
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # 限制梯度范围
-                optimizer_ep.step()
+                loss.backward()   # 反向传播
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)  # 限制梯度范围 原0.5
+
+                # 打印梯度范数
+                grad_norms = [p.grad.norm().item() for p in model.parameters() if p.grad is not None]
+                print(f"Epoch {epoch}，梯度范数：max={max(grad_norms):.4f}，mean={np.mean(grad_norms):.4f}")
+                # 打印参数范围
+                param_values = [p.data.norm().item() for p in model.parameters()]
+                print(f"Epoch {epoch}，参数范数：max={max(param_values):.4f}，mean={np.mean(param_values):.4f}")
+                # 梯度裁剪
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
+
+                optimizer_ep.step()   # 优化器更新
                 optimizer_ep.zero_grad()
                 with torch.no_grad():
                     val_acc, val_ap, test_acc, test_ap = test_ep(model, data, train_edge)

@@ -260,6 +260,10 @@ def get_lr_schedule_by_sigmoid(n_epochs, lr, warmup):
 
 def compute_loss_para(adj):
     pos_weight = (adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum()
+
+    pos_weight = min(pos_weight, 50.0)  # 限制pos_weight最大值为50，避免极端值
+    print(f"[限制后] pos_weight: {pos_weight}")  # 检查是否打印，且值≤50
+
     norm = (
             adj.shape[0]
             * adj.shape[0]
@@ -274,19 +278,37 @@ def compute_loss_para(adj):
 # ↓↓↓ 手动负边采样辅助函数（必须放在get_ep_data之前）↓↓↓
 def _generate_negative_edges(pos_edges, num_nodes, num_neg_needed):
     pos_edge_set = set()
+    # 将正边存入集合，保持原逻辑
     for u, v in pos_edges.T.numpy():
         pos_edge_set.add(tuple(sorted((u, v))))
-    neg_edges = []
-    while len(neg_edges) < num_neg_needed:
-        u = np.random.randint(0, num_nodes)
-        v = np.random.randint(0, num_nodes)
-        if u == v:
-            continue
-        neg_edge = tuple(sorted((u, v)))
-        if neg_edge not in pos_edge_set:
-            neg_edges.append([u, v])
-    return torch.tensor(neg_edges, dtype=torch.long).T
 
+    neg_edges = []
+    # 改为批量生成候选边，减少循环次数
+    while len(neg_edges) < num_neg_needed:
+        # 计算还需要的负边数量
+        remaining = num_neg_needed - len(neg_edges)
+        # 批量生成候选节点对（生成2倍需求数量以减少循环）
+        u = np.random.randint(low=0, high=num_nodes, size=remaining * 2)
+        v = np.random.randint(low=0, high=num_nodes, size=remaining * 2)
+
+        # 过滤自环边
+        mask = (u != v)
+        u = u[mask]
+        v = v[mask]
+
+        # 对每对节点排序，保持与正边集合的存储格式一致
+        sorted_pairs = np.sort(np.stack([u, v], axis=1), axis=1)
+        # 转为元组集合以便快速查重
+        candidate_set = set(tuple(pair) for pair in sorted_pairs)
+        # 筛选出不在正边集合中的边
+        valid_candidates = candidate_set - pos_edge_set
+        # 转换为列表并截取需要的数量
+        valid_list = list(valid_candidates)[:remaining]
+        # 添加到负边列表
+        neg_edges.extend(valid_list)
+
+    # 保持原返回格式
+    return torch.tensor(neg_edges, dtype=torch.long).T
 ####大改
 # 在 lib.py 中修改 get_ep_data 函数
 def get_ep_data(data, args):
@@ -373,9 +395,17 @@ def get_ep_data(data, args):
 
         # 计算pos_weight和norm_w
         adj_m = adj.view(-1)
+
         pos_weight = (adj.shape[0] ** 2 - adj.sum()) / adj.sum()
         norm_w = adj.shape[0] ** 2 / (2 * (adj.shape[0] ** 2 - adj.sum()))
         print(f"[权重计算结果] pos_weight：{pos_weight:.2f}，norm_w：{norm_w:.4f}")
+        # 修改后（正确）
+        #weight_tensor, norm = compute_loss_para(adj)  # 调用你的限制函数
+        # 从weight_tensor中提取pos_weight（正样本的权重）
+        #pos_weight = weight_tensor[weight_tensor > 1].unique().item()  # 取正样本权重值
+        #pos_weight = torch.tensor(pos_weight, dtype=torch.float32)  # 转换为 PyTorch 张量
+        #print(f"[权重计算结果] pos_weight：{pos_weight}，norm_w：{norm}")  # 现在打印的是限制后的值
+
 
     else:  # 节点分类任务
         pass
