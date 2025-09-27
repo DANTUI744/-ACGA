@@ -46,7 +46,7 @@ python ACGA.py --dataset combined --hidden_size 128 --emb_size 32 --gae 0 --use_
 #### Run the link prediction task：
 
 ```
-python ACGA.py --dataset combined --hidden_size 32 --emb_size 16 --gae 0 --use_bns True --task 1
+python ACGA.py --dataset combined --hidden_size 32 --emb_size 16 --gae 0 --use_bns False --task 1
 ```
 
 #### 运行 yyz 数据集

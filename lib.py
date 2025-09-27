@@ -261,9 +261,9 @@ def get_lr_schedule_by_sigmoid(n_epochs, lr, warmup):
 def compute_loss_para(adj):
     pos_weight = (adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum()
 
-    pos_weight = min(pos_weight, 50.0)  # 限制pos_weight最大值为50，避免极端值
-    print(f"[限制后] pos_weight: {pos_weight}")  # 检查是否打印，且值≤50
+    pos_weight = min(pos_weight, 50.0)  # 也可同时降低上限，比如30
 
+    pos_weight = torch.tensor(pos_weight, dtype=torch.float32)
     norm = (
             adj.shape[0]
             * adj.shape[0]
@@ -397,6 +397,7 @@ def get_ep_data(data, args):
         adj_m = adj.view(-1)
 
         pos_weight = (adj.shape[0] ** 2 - adj.sum()) / adj.sum()
+        pos_weight = min(pos_weight, 50.0)  # 新加
         norm_w = adj.shape[0] ** 2 / (2 * (adj.shape[0] ** 2 - adj.sum()))
         print(f"[权重计算结果] pos_weight：{pos_weight:.2f}，norm_w：{norm_w:.4f}")
         # 修改后（正确）

@@ -215,7 +215,7 @@ def main(trial=None, train_edge=None):
         beta = trial.suggest_discrete_uniform('beta', 0, 3, 0.05)
         gamma = trial.suggest_discrete_uniform('gama', 0, 5, 0.05)
     else:
-        alpha, beta, gamma = 0.69, 8.85, 3.6
+        alpha, beta, gamma = 0.69, 3.85, 3.6  # 改 8.85-3.85
     for weight in range(1, num):
         if args.task == 0:
             lr, weight_decay = 5e-4, 5e-4  # , 5e-4  # , 5e-4
@@ -247,7 +247,7 @@ def main(trial=None, train_edge=None):
             print(f'num = {weight}, best_val_acc = {best_val_acc * 100:.1f}%, '
                   f'last_test_acc = {last_test_acc * 100:.1f}%')
         else:
-            lr, weight_decay = 1e-4, 5e-4  # 5e-4   修改了学习率，下降10
+            lr, weight_decay = 1e-5, 5e-4  # 5e-4   修改了学习率，下降10
             best_val_acc, best_val_ap, last_test_acc, last_test_ap, early_stop, patience = 0, 0, 0, 0, 0, 200
             # setup_seed(1024)
             model.reset_parameters()
@@ -259,7 +259,7 @@ def main(trial=None, train_edge=None):
                 ep_loss = train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer_ep, args, weight)
                 loss = rep_loss + ep_loss
                 loss.backward()   # 反向传播
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)  # 限制梯度范围 原0.5
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.05)  # 限制梯度范围 原0.5
 
                 # 打印梯度范数
                 grad_norms = [p.grad.norm().item() for p in model.parameters() if p.grad is not None]
