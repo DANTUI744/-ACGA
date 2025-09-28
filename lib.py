@@ -261,8 +261,6 @@ def get_lr_schedule_by_sigmoid(n_epochs, lr, warmup):
 def compute_loss_para(adj):
     pos_weight = (adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum()
 
-    pos_weight = min(pos_weight, 50.0)  # 也可同时降低上限，比如30
-
     pos_weight = torch.tensor(pos_weight, dtype=torch.float32)
     norm = (
             adj.shape[0]
@@ -309,6 +307,7 @@ def _generate_negative_edges(pos_edges, num_nodes, num_neg_needed):
 
     # 保持原返回格式
     return torch.tensor(neg_edges, dtype=torch.long).T
+
 ####大改
 # 在 lib.py 中修改 get_ep_data 函数
 def get_ep_data(data, args):
@@ -319,6 +318,7 @@ def get_ep_data(data, args):
     pos_weight = None
     train_edge = None
 
+#加了日志
     # 调试data对象信息
     print("=" * 50)
     print("[紧急调试] data 对象信息：")
@@ -333,6 +333,7 @@ def get_ep_data(data, args):
     print("=" * 50)
 
     if args.task == 1:  # 链接预测任务
+        # 分割边为训练/验证/调试集
         train_rate = 0.85
         val_ratio = (1 - train_rate) / 3
         test_ratio = (1 - train_rate) / 3 * 2
@@ -397,18 +398,13 @@ def get_ep_data(data, args):
         adj_m = adj.view(-1)
 
         pos_weight = (adj.shape[0] ** 2 - adj.sum()) / adj.sum()
-        pos_weight = min(pos_weight, 50.0)  # 新加
+
         norm_w = adj.shape[0] ** 2 / (2 * (adj.shape[0] ** 2 - adj.sum()))
         print(f"[权重计算结果] pos_weight：{pos_weight:.2f}，norm_w：{norm_w:.4f}")
-        # 修改后（正确）
-        #weight_tensor, norm = compute_loss_para(adj)  # 调用你的限制函数
-        # 从weight_tensor中提取pos_weight（正样本的权重）
-        #pos_weight = weight_tensor[weight_tensor > 1].unique().item()  # 取正样本权重值
-        #pos_weight = torch.tensor(pos_weight, dtype=torch.float32)  # 转换为 PyTorch 张量
-        #print(f"[权重计算结果] pos_weight：{pos_weight}，norm_w：{norm}")  # 现在打印的是限制后的值
 
 
     else:  # 节点分类任务
+
         pass
 
     return new_label, adj_m, norm_w, pos_weight, train_edge
