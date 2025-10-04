@@ -37,9 +37,9 @@ def get_parser():
     parser.add_argument('--gae', type=str2bool, help='whether use GAE ', default=True)
     parser.add_argument('--use_bns', type=str2bool, help='whether use bns for GNN layer ', default=True)
     parser.add_argument('--task', type=int, help='node cls = 0, edge predict = 1', default=0)
-    parser.add_argument('--alpha', type=float, default=0.32)
-    parser.add_argument('--beta', type=float, default=5.85)
-    parser.add_argument('--gamma', type=float, default=1.9)
+    parser.add_argument('--alpha', type=float, default=0.4)  # 0.32
+    parser.add_argument('--beta', type=float, default=0.7)  # 5.85
+    parser.add_argument('--gamma', type=float, default=2.85)  # 1.9
     # 补充 subgraph_size 参数（关键修改）
     parser.add_argument('--subgraph_size', type=int, default=64,  # 类型为整数，默认值64（可根据数据调整）
                         help='Size of subgraph used in training (adjust based on your dataset)')
