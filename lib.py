@@ -308,9 +308,14 @@ def _generate_negative_edges(pos_edges, num_nodes, num_neg_needed):
     # 保持原返回格式
     return torch.tensor(neg_edges, dtype=torch.long).T
 
-####大改
-# 在 lib.py 中修改 get_ep_data 函数
+
+
+# 主要功能是为边预测任务准备数据
+# 预处理阶段，在原始边中划分训练/验证/测试集
+# 随机采样负边，保证正负例数量平和
+# 计算正负例权重和归一化系数，解决图中负例远多于正例的问题
 def get_ep_data(data, args):
+    # 输入图数据data对象，包含节点特征，边索引。args是命令行参数，args.task决定任务类型
     # 初始化默认返回值
     new_label = None
     adj_m = None
@@ -318,25 +323,12 @@ def get_ep_data(data, args):
     pos_weight = None
     train_edge = None
 
-#加了日志
-    # 调试data对象信息
-    print("=" * 50)
-    print("[紧急调试] data 对象信息：")
-    print("1. data 是否是 PyG Data 类型：", isinstance(data, Data))
-    print("2. data 是否有 edge_index 属性：", hasattr(data, 'edge_index'))
-    if hasattr(data, 'edge_index'):
-        print("3. edge_index 形状（应为 [2, 边数]）：", data.edge_index.shape)
-        print("4. 边数（应>0）：", data.edge_index.size(1))
-        print("5. edge_index 是否有自环：", (data.edge_index[0] == data.edge_index[1]).any().item())
-    else:
-        print("⚠️  致命错误：data 没有 edge_index 属性！")
-    print("=" * 50)
-
     if args.task == 1:  # 链接预测任务
         # 分割边为训练/验证/调试集
-        train_rate = 0.85
-        val_ratio = (1 - train_rate) / 3
-        test_ratio = (1 - train_rate) / 3 * 2
+        # 只有正边
+        train_rate = 0.85  # 训练集
+        val_ratio = (1 - train_rate) / 3  # 验证集
+        test_ratio = (1 - train_rate) / 3 * 2  # 测试集
 
         # 提前保存原始edge_index，避免被修改为None
         original_edge_index = data.edge_index.clone()
@@ -386,6 +378,7 @@ def get_ep_data(data, args):
         # ↑↑↑ 负边补充逻辑结束 ↑↑↑
 
         # 构造adj矩阵（用保存的原始edge_index）
+        # 构造邻接矩阵，使用原始edge_index构造稠密邻接矩阵
         print("\n[构造adj矩阵] 使用原始edge_index，避免None错误...")
         num_edges = original_edge_index.size(1)
         adj = torch.sparse_coo_tensor(
@@ -394,20 +387,19 @@ def get_ep_data(data, args):
             size=(num_nodes, num_nodes)
         ).to_dense()
 
-        # 计算pos_weight和norm_w
+        # 将二维邻接矩阵展平为一维
         adj_m = adj.view(-1)
-
+        # 正样本权重
         pos_weight = (adj.shape[0] ** 2 - adj.sum()) / adj.sum()
-
+        # 归一化权重：用于平衡损失函数的缩放比例
         norm_w = adj.shape[0] ** 2 / (2 * (adj.shape[0] ** 2 - adj.sum()))
         print(f"[权重计算结果] pos_weight：{pos_weight:.2f}，norm_w：{norm_w:.4f}")
 
-
-    else:  # 节点分类任务
-
+    else:
         pass
 
     return new_label, adj_m, norm_w, pos_weight, train_edge
+# 输出，节点标签，图的邻接矩阵，归一化权重，正样本权重,分割后的边集（包含训练，验证，测试的正负边）
 
 
 
