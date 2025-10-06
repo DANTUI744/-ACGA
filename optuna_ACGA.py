@@ -215,7 +215,7 @@ def main(trial=None, train_edge=None):
         beta = trial.suggest_discrete_uniform('beta', 0, 3, 0.05)
         gamma = trial.suggest_discrete_uniform('gama', 0, 5, 0.05)
     else:
-        alpha, beta, gamma = 0.69, 3.85, 3.6  # 改 8.85-3.85
+        alpha, beta, gamma = 0.4, 0.7, 2.85  # 改 8.85-3.85    0.65  8.85   3.6
     for weight in range(1, num):
         if args.task == 0:
             lr, weight_decay = 5e-4, 5e-4  # , 5e-4  # , 5e-4
@@ -260,15 +260,6 @@ def main(trial=None, train_edge=None):
                 loss = rep_loss + ep_loss
                 loss.backward()   # 反向传播
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.05)  # 限制梯度范围 原0.5
-
-                # 打印梯度范数
-                grad_norms = [p.grad.norm().item() for p in model.parameters() if p.grad is not None]
-                print(f"Epoch {epoch}，梯度范数：max={max(grad_norms):.4f}，mean={np.mean(grad_norms):.4f}")
-                # 打印参数范围
-                param_values = [p.data.norm().item() for p in model.parameters()]
-                print(f"Epoch {epoch}，参数范数：max={max(param_values):.4f}，mean={np.mean(param_values):.4f}")
-                # 梯度裁剪
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
 
                 optimizer_ep.step()   # 优化器更新
                 optimizer_ep.zero_grad()

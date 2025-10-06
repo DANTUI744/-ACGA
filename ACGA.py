@@ -41,13 +41,16 @@ def get_parser():
     parser.add_argument('--beta', type=float, default=0.7)  # 5.85
     parser.add_argument('--gamma', type=float, default=2.85)  # 1.9
     # 补充 subgraph_size 参数（关键修改）
-    parser.add_argument('--subgraph_size', type=int, default=64,  # 类型为整数，默认值64（可根据数据调整）
+    parser.add_argument('--subgraph_size', type=int, default=200,  # 类型为整数，默认值64（可根据数据调整）
                         help='Size of subgraph used in training (adjust based on your dataset)')
     return parser
 
 
 def train_rep(model, data, num_classes, alpha=0.5, beta=3.0, gamma=2.0, train_edge=None, new_label=None):
-    model.train()
+    # train_rep函数用于训练模型的学习部分，通过多轮迭代优化模型参数
+    # model为待训练的ACGA模型，train_rep为训练加载器(批次数据)，optimizer 为优化器
+    # criterion为损失函数，epochs为训练轮数
+    model.train()  # 将模型设为训练模式（启用dropout、批归一化更新什么的）
     batch = data.to(device)
     if isinstance(new_label, np.ndarray):
         label_all = new_label
@@ -120,7 +123,7 @@ def train_ep(model, data, train_edge, adj_m, norm_w, pos_weight, optimizer, args
     #     mu = model.ep.mean
     #     logit = model.ep.logstd
     #     kl_divergence = 0.5 * (1 + 2 * logit - mu ** 2 - torch.exp(2 * logit)).sum(1).mean()
-    loss_nc = loss_nc - kl_divergence
+    loss_nc = loss_nc - kl_divergence  # 恢复KL项
     # loss_nc.backward()
     # optimizer.step()
 
